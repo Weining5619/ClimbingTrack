@@ -1,10 +1,28 @@
 # ClimbingTrack
-# 攀岩训练智能管理系统 🧗‍♂️
+# 攀岩训练打卡管理系统 🧗‍♂️
 
 [![Flask](https://img.shields.io/badge/Flask-3.0.0-green)](https://flask.palletsprojects.com)
-[![License](https://img.shields.io/badge/License-MIT-blue)](https://opensource.org/licenses/MIT)
+[![轻松使用](https://img.shields.io/badge/License-自由使用-green)]()
 
-**本地部署的攀岩训练解决方案** | 小程序版本开发中 🚧
+**仅供学习交流 | 个人兴趣项目 | 欢迎随意使用**
+
+---
+
+## 📋 训练饮食模板
+👉 [点击下载训练计划模板](plan_template.csv)  
+❗ 请务必保存为 **CSV格式** 后上传，字段顺序不可调整
+
+---
+
+## 🎯 项目初衷
+
+```diff
++ 这是一个兴趣驱动的项目，旨在帮助攀岩爱好者记录成长
++ 所有代码可自由使用/修改/分享（保留署名即可）
++ 本地部署的攀岩训练解决方案 | 小程序版本开发中 🚧
+```
+
+
 
 ![网页预览](https://github.com/Weining5619/ClimbingTrack/blob/main/pic/Webpage_preview.jpg)
 
@@ -14,6 +32,14 @@
 - 🚨 Server酱微信提醒集成（定时推送+完成通知）
 - 📊 本地数据可视化（训练时长/营养摄入）
 - 🏆 成就系统（连续打卡解锁特殊奖励）
+
+###🐦 中断恢复逻辑：
+```bash
+- 计划中断 → 执行3天应急训练 → 判断中断时长：
+├─ ≤3天 → 延续当前周期（周几练周几）  
+├─ 4-7天 → 重启当周（从周一开始）  
+└─ ＞7天 → 倒退1周 + 筋膜唤醒  
+```
 
 
 ## 🛠️ 技术架构
