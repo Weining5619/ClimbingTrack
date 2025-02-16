@@ -1,0 +1,3 @@
+backend/venv/
+backend/climbing.db
+__pycache__/
