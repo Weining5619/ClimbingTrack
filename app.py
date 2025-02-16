@@ -3,11 +3,11 @@ import os
 import json
 import requests
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# 初始化应用
+# 初始化 Flask 应用
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(os.path.abspath(os.path.dirname(__file__)), 'climbing.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -27,25 +27,21 @@ class Plan(db.Model):
     last_completed = db.Column(db.DateTime)
     cycle_day = db.Column(db.Integer)
 
-# Server酱配置
+# Server酱推送
 SERVERCHAN_KEY = os.getenv('SERVERCHAN_KEY')
 
 def send_serverchan(msg):
     if not SERVERCHAN_KEY:
         return
-    
     try:
         url = f"https://sctapi.ftqq.com/{SERVERCHAN_KEY}.send"
-        params = {
-            "title": "🏔 攀岩训练提醒",
-            "desp": f"## {datetime.now().strftime('%m/%d')} 训练计划\n{msg}"
-        }
+        params = {"title": "🏔 攀岩训练提醒", "desp": f"## {datetime.now().strftime('%m/%d')} 训练计划\n{msg}"}
         response = requests.post(url, data=params)
         return response.json()
     except Exception as e:
         print(f"推送失败: {str(e)}")
 
-# 定时任务配置
+# 定时任务
 scheduler = BackgroundScheduler(daemon=True)
 scheduler.start()
 
@@ -53,11 +49,10 @@ def generate_reminder_content():
     today_plan = Plan.query.filter_by(date=datetime.now().strftime("%Y-%m-%d")).first()
     if not today_plan:
         return None
-    
     content = [
         f"**{today_plan.day_type}**",
         "🏋️ 训练重点：",
-        *["- "+item for category in today_plan.workout.values() for item in category][:3],
+        *["- " + item for category in today_plan.workout.values() for item in category][:3],
         "🍱 今日餐单：",
         *[f"{meal_type}：{', '.join(items)}" for meal_type, items in today_plan.meal.items()]
     ]
@@ -204,49 +199,54 @@ base_plan = [
     }
 ]
 
-
-
+# 生成每日训练计划
 def generate_dynamic_plan():
-    today = datetime.now().date()
-    today_str = today.strftime("%Y-%m-%d")
-    
+    today_str = datetime.now().strftime("%Y-%m-%d")
     if not Plan.query.filter_by(date=today_str).first():
-        last_record = Plan.query.filter(Plan.completed==True).order_by(Plan.date.desc()).first()
-        
-        interruption_days = 0
-        new_cycle_day = 0
-        if last_record:
-            last_date = datetime.strptime(last_record.date, "%Y-%m-%d").date()
-            interruption_days = (today - last_date).days - 1
-            
-            if interruption_days <= 3:
-                new_cycle_day = (last_record.cycle_day + 1) % len(base_plan)
-            else:
-                new_cycle_day = 0
-                # 添加动态拉伸
-                if interruption_days > 3 and new_cycle_day < 3:
-                    if '动态恢复' not in base_plan[new_cycle_day]['workout']:
-                        base_plan[new_cycle_day]['workout']['动态恢复'] = []
-                    base_plan[new_cycle_day]['workout']['动态恢复'].append("全身动态拉伸（重点胸椎/髋关节）")
-
-        selected_plan = base_plan[new_cycle_day]
+        cycle_day = (datetime.now().timetuple().tm_yday - 1) % len(base_plan)
         new_plan = Plan(
             date=today_str,
-            day_type=selected_plan['day_type'],
-            workout=selected_plan['workout'],
-            meal=selected_plan['meal'],
-            cycle_day=new_cycle_day
+            day_type=base_plan[cycle_day]["day_type"],
+            workout=base_plan[cycle_day]["workout"],
+            meal=base_plan[cycle_day]["meal"],
+            cycle_day=cycle_day
         )
         db.session.add(new_plan)
         db.session.commit()
 
-# 路由定义
+# API：获取今日训练计划
+@app.route('/api/today_plan', methods=['GET'])
+def api_get_today_plan():
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    plan = Plan.query.filter_by(date=today_str).first()
+    if plan:
+        return jsonify({
+            "date": plan.date,
+            "day_type": plan.day_type,
+            "workout": plan.workout,
+            "meal": plan.meal,
+            "completed": plan.completed
+        })
+    return jsonify({"error": "No plan found"}), 404
+
+# API：完成训练打卡
+@app.route('/api/complete', methods=['POST'])
+def api_complete_plan():
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    plan = Plan.query.filter_by(date=today_str).first()
+    if plan:
+        plan.completed = True
+        db.session.commit()
+        send_serverchan(f"✅ {datetime.now().strftime('%m/%d')} 训练已完成！")
+        return jsonify({"message": "训练已完成"})
+    return jsonify({"error": "计划不存在"}), 404
+
+# Web 页面
 @app.route('/')
 def index():
     generate_dynamic_plan()
     today_plan = Plan.query.filter_by(date=datetime.now().strftime("%Y-%m-%d")).first()
-    
-    # 计算连续打卡
+
     streak = 0
     check_date = datetime.now().date()
     while True:
@@ -257,18 +257,22 @@ def index():
             check_date -= timedelta(days=1)
         else:
             break
-    
-    # 中断提示
+
     message = None
     last_completed = Plan.query.filter(Plan.completed==True).order_by(Plan.date.desc()).first()
     if last_completed:
-        interruption_days = (datetime.now().date() - last_completed.date.date()).days - 1
+        last_completed_date = datetime.strptime(last_completed.date, "%Y-%m-%d").date()
+        interruption_days = (datetime.now().date() - last_completed_date).days - 1
         if interruption_days > 7:
             message = "中断＞7天：所有训练组数×70%，重量/难度降低2档"
         elif interruption_days > 3:
             message = "中断4-7天：所有训练组数×80%，重量/难度降低1档"
-    
+
     return render_template('index.html', plan=today_plan, streak=streak, message=message)
+
+@app.route('/upload')
+def upload():
+    return render_template('upload.html')
 
 @app.route('/complete', methods=['POST'])
 def complete():
@@ -281,7 +285,9 @@ def complete():
         send_serverchan(f"✅ {datetime.now().strftime('%m/%d')} 训练已完成！")
     return redirect(url_for('index'))
 
+# 启动应用
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    app.run(debug=True)
+        generate_dynamic_plan()
+    app.run(host='0.0.0.0', port=5001, debug=True)
