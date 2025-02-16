@@ -17,6 +17,7 @@
 
 ## 🛠️ 技术架构
 
+```bash
 CLIMBING_TRACKER/
 ├── backend/              # Flask服务端
 │   ├── app.py            # API核心逻辑
@@ -24,9 +25,11 @@ CLIMBING_TRACKER/
 │   └── templates/        # 网页模板
 ├── frontend/             # 小程序源码（待发布）
 └── plan_template.csv     # CSV训练模板
+```
 
 
 ## 🚀 快速启动
+
 ```bash
 # 克隆仓库
 git clone https://github.com/yourname/climbing_tracker.git
@@ -42,3 +45,32 @@ flask --app app.py shell
 # 启动服务（开发模式）
 flask --app app.py run --host=0.0.0.0 --port=5000
 ```
+访问 http://localhost:5000 开启训练之旅
+
+
+## ⚠️ 当前局限性与注意事项
+### 本地部署限制
+  - 📦 **数据非云端：**使用SQLite本地存储，不支持多设备同步
+
+  - 👥 **单用户系统：**未实现多用户账号体系
+
+  - 📱 **移动端适配：**网页版未优化移动端体验
+
+  - 🔐 **安全警告：**未启用CSRF保护（生产环境需配置）
+
+### 功能待完善
+  - 📈 **数据分析局限：**仅基础统计，缺乏进阶可视化
+
+  - ⏰ **提醒依赖：**需自行配置Server酱服务
+
+  - 🔄 **恢复假设：**中断检测基于本地时间，时区敏感
+
+  - 📤 **导入限制：**CSV模板需严格遵循格式规范
+
+### 性能边界
+  - ⚡ **并发限制：**SQLite不支持高并发访问
+
+  - 🗄️ **扩展瓶颈：**千条以上记录可能出现性能衰减
+
+  - 📡 **网络要求：**微信提醒需服务器具备公网IP
+
