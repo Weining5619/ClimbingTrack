@@ -1,31 +1,75 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, render_template, request, redirect, url_for
-from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime, timedelta
-import pandas as pd
 import os
 import json
+import requests
+from datetime import datetime, timedelta
+from flask import Flask, render_template, request, redirect, url_for
+from flask_sqlalchemy import SQLAlchemy
+from apscheduler.schedulers.background import BackgroundScheduler
 
+# 初始化应用
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(os.path.abspath(os.path.dirname(__file__)), 'climbing.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.secret_key = os.getenv('FLASK_SECRET')
+
+# 初始化数据库
 db = SQLAlchemy(app)
 
 # 数据库模型
 class Plan(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.String(10), unique=True)
-    day_type = db.Column(db.String(20))  # 训练日类型
-    workout = db.Column(db.JSON)        # 训练内容
-    meal = db.Column(db.JSON)           # 饮食计划
+    day_type = db.Column(db.String(20))
+    workout = db.Column(db.JSON)
+    meal = db.Column(db.JSON)
     completed = db.Column(db.Boolean, default=False)
+    last_completed = db.Column(db.DateTime)
+    cycle_day = db.Column(db.Integer)
 
-# 初始化数据库
-with app.app_context():
-    db.create_all()
+# Server酱配置
+SERVERCHAN_KEY = os.getenv('SERVERCHAN_KEY')
 
-# 6周训练模板（2025新版）
-# 6周训练模板（完整版）
+def send_serverchan(msg):
+    if not SERVERCHAN_KEY:
+        return
+    
+    try:
+        url = f"https://sctapi.ftqq.com/{SERVERCHAN_KEY}.send"
+        params = {
+            "title": "🏔 攀岩训练提醒",
+            "desp": f"## {datetime.now().strftime('%m/%d')} 训练计划\n{msg}"
+        }
+        response = requests.post(url, data=params)
+        return response.json()
+    except Exception as e:
+        print(f"推送失败: {str(e)}")
+
+# 定时任务配置
+scheduler = BackgroundScheduler(daemon=True)
+scheduler.start()
+
+def generate_reminder_content():
+    today_plan = Plan.query.filter_by(date=datetime.now().strftime("%Y-%m-%d")).first()
+    if not today_plan:
+        return None
+    
+    content = [
+        f"**{today_plan.day_type}**",
+        "🏋️ 训练重点：",
+        *["- "+item for category in today_plan.workout.values() for item in category][:3],
+        "🍱 今日餐单：",
+        *[f"{meal_type}：{', '.join(items)}" for meal_type, items in today_plan.meal.items()]
+    ]
+    return '\n\n'.join(content)
+
+@scheduler.scheduled_job('cron', hour=8, minute=30, timezone='Asia/Shanghai')
+def daily_reminder():
+    content = generate_reminder_content()
+    if content:
+        send_serverchan(content)
+
+# 训练计划
 base_plan = [
     # ============ d1 ============ 
     {
@@ -160,21 +204,38 @@ base_plan = [
     }
 ]
 
+
+
 def generate_dynamic_plan():
     today = datetime.now().date()
     today_str = today.strftime("%Y-%m-%d")
     
     if not Plan.query.filter_by(date=today_str).first():
-        # 计算训练周期
-        first_record = Plan.query.order_by(Plan.date.asc()).first()
-        start_date = datetime.strptime(first_record.date, "%Y-%m-%d").date() if first_record else today
-        day_num = (today - start_date).days % len(base_plan)
+        last_record = Plan.query.filter(Plan.completed==True).order_by(Plan.date.desc()).first()
         
+        interruption_days = 0
+        new_cycle_day = 0
+        if last_record:
+            last_date = datetime.strptime(last_record.date, "%Y-%m-%d").date()
+            interruption_days = (today - last_date).days - 1
+            
+            if interruption_days <= 3:
+                new_cycle_day = (last_record.cycle_day + 1) % len(base_plan)
+            else:
+                new_cycle_day = 0
+                # 添加动态拉伸
+                if interruption_days > 3 and new_cycle_day < 3:
+                    if '动态恢复' not in base_plan[new_cycle_day]['workout']:
+                        base_plan[new_cycle_day]['workout']['动态恢复'] = []
+                    base_plan[new_cycle_day]['workout']['动态恢复'].append("全身动态拉伸（重点胸椎/髋关节）")
+
+        selected_plan = base_plan[new_cycle_day]
         new_plan = Plan(
             date=today_str,
-            day_type=base_plan[day_num]['day_type'],
-            workout=base_plan[day_num]['workout'],
-            meal=base_plan[day_num]['meal']
+            day_type=selected_plan['day_type'],
+            workout=selected_plan['workout'],
+            meal=selected_plan['meal'],
+            cycle_day=new_cycle_day
         )
         db.session.add(new_plan)
         db.session.commit()
@@ -197,9 +258,30 @@ def index():
         else:
             break
     
-    return render_template('index.html', plan=today_plan, streak=streak)
+    # 中断提示
+    message = None
+    last_completed = Plan.query.filter(Plan.completed==True).order_by(Plan.date.desc()).first()
+    if last_completed:
+        interruption_days = (datetime.now().date() - last_completed.date.date()).days - 1
+        if interruption_days > 7:
+            message = "中断＞7天：所有训练组数×70%，重量/难度降低2档"
+        elif interruption_days > 3:
+            message = "中断4-7天：所有训练组数×80%，重量/难度降低1档"
+    
+    return render_template('index.html', plan=today_plan, streak=streak, message=message)
 
-# 其他路由保持不变...
+@app.route('/complete', methods=['POST'])
+def complete():
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    plan = Plan.query.filter_by(date=today_str).first()
+    if plan:
+        plan.completed = True
+        plan.last_completed = datetime.now()
+        db.session.commit()
+        send_serverchan(f"✅ {datetime.now().strftime('%m/%d')} 训练已完成！")
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)
