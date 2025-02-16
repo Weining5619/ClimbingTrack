@@ -1,0 +1,15 @@
+<view class="container">
+  <text>今日计划：{{plan.day_type}}</text>
+  <text>训练内容：</text>
+  <block wx:for="{{plan.workout['动作列表']}}" wx:key="index">
+    <text>- {{item}}</text>
+  </block>
+
+  <text>餐单：</text>
+  <block wx:for="{{plan.meal['早餐']}}" wx:key="index">
+    <text>- {{item}}</text>
+  </block>
+
+  <button bindtap="completePlan" wx:if="{{!plan.completed}}">完成训练</button>
+  <text wx:if="{{plan.completed}}">✅ 今日训练已完成！</text>
+</view>
